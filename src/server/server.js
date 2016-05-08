@@ -1,9 +1,21 @@
+// =========================
+// EXTERNAL IMPORTS
 import "source-map-support/register";
 import express from "express";
 import http from "http";
 import socketIo from "socket.io";
 import chalk from "chalk";
+import {Observable} from "rxjs";
+// =========================
+// INTERNAL IMPORTS
+import "shared/operators";
+import {ObservableSocket} from "shared/observable-socket";
+import {UsersModule} from "./modules/users";
+import {ChatModule} from "./modules/chat";
+import {PlaylistModule} from "./modules/playlist";
 
+// =========================
+// ENV SETTINGS
 const isDevelopment = process.env.NODE_ENV !== "production";
 
 // =========================
@@ -51,13 +63,34 @@ app.get("/", (req, res) => {
 });
 
 // =========================
+// SERVICES
+const videoServices = [];
+const playlistRepository = {};
+
+// =========================
 // MODULES
+const users = new UsersModule(io);
+const chat = new ChatModule(io, users);
+const playlist = new PlaylistModule(io, users, videoServices, playlistRepository);
+const modules = [users, chat, playlist];
+
 
 // =========================
 // SOCKET
 io.on("connection", socket => {
     console.log("Got connection from: " + socket.request.connection.remoteAddress);
+
+    const client = new ObservableSocket(socket);
+    
+    for(let mod of modules) {
+        mod.registerClient(client);
+    }
+    
+    for(let mod of modules) {
+        mod.clientRegistered(client);
+    }
 });
+
 
 // =========================
 // START
@@ -67,4 +100,13 @@ function startServer() {
         console.log("started http server on: " + port );
     });
 }
-startServer();
+
+Observable.merge(...modules.map(m => m.init$()))
+    .subscribe({
+        complete() {
+            startServer();
+        },
+        error(error) {
+            console.error('Could not init module: ' + (error.stack || error));
+        }
+    });
